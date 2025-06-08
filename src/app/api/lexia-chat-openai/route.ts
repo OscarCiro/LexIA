@@ -1,3 +1,4 @@
+
 import OpenAI from 'openai';
 import type { NextRequest } from 'next/server';
 
@@ -34,10 +35,10 @@ export async function POST(req: NextRequest) {
 
 
     const stream = await openai.chat.completions.create({
-      model: "gpt-4-turbo", // Using a capable and generally available model
+      model: "gpt-4-turbo-preview", // Changed model identifier
       messages: messages,
-      temperature: 0.5, // Adjusted for potentially more factual responses
-      max_tokens: 2000, // Max output tokens
+      temperature: 0.5, 
+      max_tokens: 2000, 
       stream: true,
     });
 
