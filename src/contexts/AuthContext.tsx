@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { ReactNode, FC } from 'react';
@@ -9,7 +10,8 @@ import type { UserProfile, AiProvider } from '@/types';
 interface AuthContextType {
   user: UserProfile | null;
   firebaseUser: FirebaseUser | null;
-  loading: boolean;
+  loading: boolean; // Firebase auth loading
+  apiKeysProcessed: boolean; // True after API keys and provider pref are read from localStorage
   geminiApiKey: string | null;
   setGeminiApiKey: (key: string | null) => void;
   openaiApiKey: string | null;
@@ -24,7 +26,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // For Firebase auth
+  const [apiKeysProcessed, setApiKeysProcessed] = useState(false); // For localStorage reads
+
   const [geminiApiKey, setStoredGeminiApiKey] = useState<string | null>(null);
   const [openaiApiKey, setStoredOpenaiApiKey] = useState<string | null>(null);
   const [selectedProvider, setStoredSelectedProvider] = useState<AiProvider>('gemini');
@@ -43,20 +47,28 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         setFirebaseUser(null);
         setUser(null);
       }
-      setLoading(false);
+      setLoading(false); // Firebase auth state resolved
     });
 
-    const storedGeminiKey = localStorage.getItem('geminiApiKey');
-    if (storedGeminiKey) {
-      setStoredGeminiApiKey(storedGeminiKey);
-    }
-    const storedOpenaiKey = localStorage.getItem('openaiApiKey');
-    if (storedOpenaiKey) {
-      setStoredOpenaiApiKey(storedOpenaiKey);
-    }
-    const storedProvider = localStorage.getItem('selectedAiProvider') as AiProvider | null;
-    if (storedProvider) {
-      setStoredSelectedProvider(storedProvider);
+    // Load API keys and provider preference from localStorage
+    try {
+      const storedGeminiKey = localStorage.getItem('geminiApiKey');
+      if (storedGeminiKey) {
+        setStoredGeminiApiKey(storedGeminiKey);
+      }
+      const storedOpenaiKey = localStorage.getItem('openaiApiKey');
+      if (storedOpenaiKey) {
+        setStoredOpenaiApiKey(storedOpenaiKey);
+      }
+      const storedProvider = localStorage.getItem('selectedAiProvider') as AiProvider | null;
+      if (storedProvider) {
+        setStoredSelectedProvider(storedProvider);
+      }
+    } catch (error) {
+      console.error("Error reading from localStorage:", error);
+      // Continue without stored keys if localStorage fails
+    } finally {
+      setApiKeysProcessed(true); // Mark API key processing as complete
     }
     
     return () => unsubscribe();
@@ -99,6 +111,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       user, 
       firebaseUser, 
       loading, 
+      apiKeysProcessed,
       geminiApiKey, 
       setGeminiApiKey,
       openaiApiKey,

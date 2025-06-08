@@ -9,7 +9,7 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp, doc, updateDoc, getDoc, getDocs, limit } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { SendHorizonal, Loader2, Brain, Sparkles } from 'lucide-react'; // Added Brain and Sparkles
+import { SendHorizonal, Loader2, Brain, Sparkles } from 'lucide-react'; 
 import MessageBubble from './MessageBubble';
 import ChatHistorySidebar from './ChatHistorySidebar';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,7 +19,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 const LEXIA_GREETING_TEXT = "¡Hola! Soy LexIA, tu asistente jurídico especializado en Derecho español y europeo. ¿En qué puedo ayudarte hoy?";
 
 export default function ChatInterface() {
-  const { user, selectedProvider, getActiveApiKey, loading: authLoading } = useAuth();
+  const { user, selectedProvider, getActiveApiKey, loading: authContextLoading, apiKeysProcessed } = useAuth(); // Renamed loading to authContextLoading
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
@@ -29,6 +29,10 @@ export default function ChatInterface() {
   
   const viewportRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  // Derive current API key and if chat should be interactable
+  const currentApiKey = getActiveApiKey();
+  const canInteract = !authContextLoading && apiKeysProcessed && user && currentApiKey && activeConversationId && !isLoadingMessages;
 
   const handleCreateNewChat = useCallback(async (): Promise<string | null> => {
     if (!user) return null;
@@ -53,7 +57,8 @@ export default function ChatInterface() {
   }, [user, toast]);
 
   useEffect(() => {
-    if (user && !activeConversationId && !isCreatingNewChat) {
+    // Initialize or load conversation only when user and API keys are ready
+    if (user && apiKeysProcessed && !activeConversationId && !isCreatingNewChat) {
       setIsLoadingMessages(true);
       const convCol = collection(db, 'conversations');
       const q = query(
@@ -66,27 +71,32 @@ export default function ChatInterface() {
         if (!snapshot.empty) {
           setActiveConversationId(snapshot.docs[0].id);
         } else {
-          handleCreateNewChat();
+          // Only create new chat if an API key is available
+          if (getActiveApiKey()) {
+            handleCreateNewChat();
+          }
         }
       }).catch(error => {
         console.error("Error fetching initial conversation:", error);
-        handleCreateNewChat(); 
+        if (getActiveApiKey()) {
+          handleCreateNewChat(); 
+        }
       }).finally(() => {
-        // setIsLoadingMessages(false); // Moved to message loading effect
+        // setIsLoadingMessages(false); // Managed by messages loading effect
       });
     }
-  }, [user, activeConversationId, handleCreateNewChat, isCreatingNewChat]);
+  }, [user, apiKeysProcessed, activeConversationId, handleCreateNewChat, isCreatingNewChat, getActiveApiKey]);
 
 
   useEffect(() => {
-    if (!user || !activeConversationId) {
-      if (user && activeConversationId === null && !isCreatingNewChat) { 
+    if (!user || !activeConversationId || !apiKeysProcessed) {
+      if (user && apiKeysProcessed && activeConversationId === null && !isCreatingNewChat && getActiveApiKey()) { 
          setMessages([{
           id: 'initial-greeting',
           text: LEXIA_GREETING_TEXT,
           role: 'assistant',
           userId: user.uid,
-          conversationId: 'greeting-session', // This might need to be dynamic or null
+          conversationId: 'greeting-session', 
           timestamp: new Date(),
         }]);
       } else {
@@ -111,7 +121,7 @@ export default function ChatInterface() {
         fetchedMessagesDb.push({ id: doc.id, ...doc.data() } as Message);
       });
 
-      if (fetchedMessagesDb.length === 0 && !querySnapshot.metadata.hasPendingWrites && activeConversationId) {
+      if (fetchedMessagesDb.length === 0 && !querySnapshot.metadata.hasPendingWrites && activeConversationId && getActiveApiKey()) {
         setMessages([{
           id: `greeting-${activeConversationId}`,
           text: LEXIA_GREETING_TEXT,
@@ -131,7 +141,7 @@ export default function ChatInterface() {
     });
 
     return () => unsubscribe();
-  }, [user, activeConversationId, toast, isCreatingNewChat]);
+  }, [user, activeConversationId, toast, isCreatingNewChat, apiKeysProcessed, getActiveApiKey]);
 
 
   useEffect(() => {
@@ -142,8 +152,8 @@ export default function ChatInterface() {
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    const apiKey = getActiveApiKey();
-    if (!input.trim() || !user || !apiKey || !activeConversationId || isAiThinking || authLoading) return;
+    // currentApiKey is already derived and used in `canInteract`
+    if (!input.trim() || !user || !currentApiKey || !activeConversationId || isAiThinking || authContextLoading || !apiKeysProcessed) return;
 
     setIsAiThinking(true);
     const userInput = input;
@@ -164,7 +174,6 @@ export default function ChatInterface() {
       const convDoc = await getDoc(convRef);
       const updateData: { lastUpdatedAt: any; title?: string } = { lastUpdatedAt: serverTimestamp() };
       
-      // Check if this is the first user message (after potential greeting) to set title
       const nonGreetingMessages = messages.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting');
       if (convDoc.exists() && (convDoc.data().title === "Nueva Consulta" || nonGreetingMessages.filter(m=> m.role === 'user').length === 0)) {
          updateData.title = userInput.substring(0, 40) + (userInput.length > 40 ? "..." : "");
@@ -173,7 +182,6 @@ export default function ChatInterface() {
 
       const apiEndpoint = selectedProvider === 'gemini' ? '/api/lexia-chat' : '/api/lexia-chat-openai';
       
-      // Prepare history for OpenAI
       const historyForApi = selectedProvider === 'chatgpt' 
         ? messages.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting')
                     .map(m => ({role: m.role, text: m.text}))
@@ -183,7 +191,7 @@ export default function ChatInterface() {
       const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: userInput, apiKey, history: historyForApi }),
+        body: JSON.stringify({ question: userInput, apiKey: currentApiKey, history: historyForApi }),
       });
 
       if (!response.ok || !response.body) {
@@ -217,7 +225,6 @@ export default function ChatInterface() {
           msg.id === tempAssistantMessageId ? { ...msg, text: assistantResponseText } : msg
         ));
       }
-      // Ensure any final buffered text is decoded
       const remainingText = decoder.decode(undefined, { stream: false });
       if (remainingText) {
         assistantResponseText += remainingText;
@@ -229,7 +236,7 @@ export default function ChatInterface() {
 
       setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId)); 
 
-      if (assistantResponseText.trim()) { // Only add if there's actual content
+      if (assistantResponseText.trim()) { 
         const assistantMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
           text: assistantResponseText,
           role: 'assistant',
@@ -256,7 +263,7 @@ export default function ChatInterface() {
         conversationId: activeConversationId,
         timestamp: serverTimestamp(),
       };
-      if (activeConversationId) { // Ensure activeConversationId is not null
+      if (activeConversationId) { 
         await addDoc(collection(db, 'messages'), errorMessageData);
       }
     } finally {
@@ -272,8 +279,6 @@ export default function ChatInterface() {
     }
   };
   
-  const currentApiKey = getActiveApiKey();
-
   return (
     <div className="flex h-[calc(100vh-4rem)] bg-background">
       <ChatHistorySidebar
@@ -314,8 +319,8 @@ export default function ChatInterface() {
                           id: 'thinking-bubble',
                           text: '', 
                           role: 'assistant',
-                          userId: user!.uid, // user should exist if we are sending a message
-                          conversationId: activeConversationId!, // activeConversationId should exist
+                          userId: user!.uid, 
+                          conversationId: activeConversationId!, 
                           timestamp: new Date(),
                       }}
                   >
@@ -333,12 +338,12 @@ export default function ChatInterface() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Escribe tu consulta legal aquí..."
+                placeholder={canInteract ? "Escribe tu consulta legal aquí..." : "Configura tu clave API para chatear"}
                 className="flex-1 text-base"
-                disabled={authLoading || isAiThinking || !user || !currentApiKey || !activeConversationId || isLoadingMessages}
+                disabled={!canInteract || isAiThinking}
                 aria-label="Entrada de mensaje"
               />
-              <Button type="submit" disabled={authLoading || isAiThinking || !input.trim() || !user || !currentApiKey || !activeConversationId || isLoadingMessages} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              <Button type="submit" disabled={!canInteract || isAiThinking || !input.trim()} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <SendHorizonal className="h-5 w-5" />
                 <span className="sr-only">Enviar</span>
               </Button>
