@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash-latest", // Using a generally available and capable model
+      model: 'googleai/gemini-2.0-flash', // Using a generally available and capable model
       // systemInstruction: // System instruction can be part of the user prompt for older models or some configurations
     });
 

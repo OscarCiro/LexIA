@@ -18,14 +18,22 @@ const MessageBubble: FC<MessageBubbleProps> = ({ message, userDisplayName, userP
   const avatarInitial = userDisplayName ? userDisplayName.charAt(0).toUpperCase() : (isUser ? 'U' : 'L');
 
   const renderMarkdown = (text: string) => {
-    let html = text;
-    // Bold
+    let html = String(text); // Asegurar que el texto sea una cadena
+
+    // Negrita: **texto** o __texto__
+    // Se procesa primero para evitar conflictos con la cursiva de un solo asterisco/guion bajo
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/__(.*?)__/g, '<strong>$1</strong>'); // Alternative bold for __text__
-    // Italic
-    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    html = html.replace(/_(.*?)_/g, '<em>$1</em>'); // Alternative italic for _text_
-    // Newlines
+    html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+    // Cursiva: *texto* o _texto_
+    // Regex mejorada para evitar conflictos con **bold** o marcadores de lista (* item)
+    // Intenta capturar * seguido de un no-espacio/no-asterisco, luego contenido, luego no-espacio/no-asterisco, luego *
+    // Esto ayuda a distinguir *cursiva* de * lista o **negrita**.
+    html = html.replace(/(?<!\*)\*([^\s*](?:[^*]*[^\s*])?)\*(?!\*)/g, '<em>$1</em>');
+    // Similar para _cursiva_ pero evitando __negrita__
+    html = html.replace(/(?<!_)_([^\s_](?:[^_]*[^\s_])?)_(?!_)/g, '<em>$1</em>');
+
+    // Saltos de línea
     html = html.replace(/\n/g, '<br />');
     return { __html: html };
   };

@@ -35,10 +35,10 @@ export async function POST(req: NextRequest) {
 
 
     const stream = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview", // Ensure this model identifier is used
+      model: "gpt-4.1", // Ensure this model identifier is used
       messages: messages,
-      temperature: 0.5, 
-      max_tokens: 2000, 
+      temperature: 0.4, 
+      max_tokens: 8000, 
       stream: true,
     });
 
