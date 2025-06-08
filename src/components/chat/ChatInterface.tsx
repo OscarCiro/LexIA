@@ -27,7 +27,6 @@ export default function ChatInterface() {
   const [isCreatingNewChat, setIsCreatingNewChat] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null); // Ref for the viewport
   const { toast } = useToast();
 
@@ -261,7 +260,7 @@ export default function ChatInterface() {
               Chat con LexIA
             </h2>
           </CardHeader>
-          <ScrollArea className="flex-1 bg-card" viewportRef={viewportRef} ref={scrollAreaRef}>
+          <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
             <div className="p-4 space-y-4">
               {isLoadingMessages && messages.length === 0 && (
                 <div className="flex justify-center items-center h-full">
@@ -317,3 +316,4 @@ export default function ChatInterface() {
     </div>
   );
 }
+
