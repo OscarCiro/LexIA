@@ -4,9 +4,7 @@ import type { NextRequest } from 'next/server';
 
 export const runtime = 'edge'; // Prefer edge runtime for streaming
 
-const SYSTEM_PROMPT_TEMPLATE = `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable. Puedes usar emojis relevantes y profesionales de forma sutil cuando sea apropiado (ej. ⚖️, 🏛️, 🇪🇸, 🇪🇺, 📄, ✅).
-
-Pregunta del usuario: `;
+const SYSTEM_INSTRUCTION_BASE = `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable. Puedes usar emojis relevantes y profesionales de forma sutil cuando sea apropiado (ej. ⚖️, 🏛️, 🇪🇸, 🇪🇺, 📄, ✅).`;
 
 
 export async function POST(req: NextRequest) {
@@ -21,9 +19,9 @@ export async function POST(req: NextRequest) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-      model: 'googleai/gemini-2.0-flash', // Using a generally available and capable model
-      // systemInstruction: // System instruction can be part of the user prompt for older models or some configurations
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash-latest', // Updated model name
+      systemInstruction: SYSTEM_INSTRUCTION_BASE
     });
 
     const generationConfig = {
@@ -32,7 +30,7 @@ export async function POST(req: NextRequest) {
       // topK: Defines the K top-most probable tokens to be considered for sampling. Default is 40.
       // topP: Defines the P top-most probable tokens to be considered for sampling. Default is 0.95.
     };
-    
+
     const safetySettings = [
       { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
       { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
@@ -40,10 +38,8 @@ export async function POST(req: NextRequest) {
       { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
     ];
 
-    const fullPrompt = `${SYSTEM_PROMPT_TEMPLATE}${question}`;
-    
     const stream = await model.generateContentStream({
-        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+        contents: [{ role: "user", parts: [{ text: question }] }], // Pass only user question here
         generationConfig,
         safetySettings,
     });
@@ -78,13 +74,24 @@ export async function POST(req: NextRequest) {
     let message = "Error interno del servidor al procesar la solicitud.";
     let status = 500;
 
-    if (error.message && error.message.includes("API key not valid")) {
-        message = "Clave API de Gemini inválida o sin permisos.";
-        status = 401;
-    } else if (error.message) {
-        message = error.message;
+    // Check for specific GoogleGenerativeAI errors or other API errors
+    if (error.message) {
+        if (error.message.includes("API key not valid") || error.message.includes("API key is invalid")) {
+            message = "Clave API de Gemini inválida o sin permisos.";
+            status = 401;
+        } else if (error.message.includes("404 Not Found")) {
+            message = "No se pudo encontrar el modelo de IA especificado. Verifica el nombre del modelo y tu acceso.";
+            status = 404;
+        } else if (error.message.includes("permission denied") || error.message.includes("PermissionDenied")) {
+            message = "Permiso denegado. Tu clave API podría no tener acceso a este modelo o servicio.";
+            status = 403;
+        }
+        // Keep original message if it's more specific and not caught above
+        else if (status === 500) { // only override if it's still a generic 500
+          message = error.message;
+        }
     }
-    
+
     return new Response(JSON.stringify({ message }), { status, headers: { 'Content-Type': 'application/json' } });
   }
 }
