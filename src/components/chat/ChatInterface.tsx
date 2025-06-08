@@ -27,7 +27,7 @@ export default function ChatInterface() {
   const [isCreatingNewChat, setIsCreatingNewChat] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   
-  const viewportRef = useRef<HTMLDivElement>(null); // Ref for the viewport
+  const viewportRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const handleCreateNewChat = useCallback(async (): Promise<string | null> => {
@@ -41,7 +41,7 @@ export default function ChatInterface() {
         lastUpdatedAt: serverTimestamp(),
       });
       setActiveConversationId(newConvRef.id);
-      setMessages([]); // Clear messages for new chat before greeting is added
+      setMessages([]); 
       return newConvRef.id;
     } catch (error) {
       console.error("Error creating new chat:", error);
@@ -70,9 +70,7 @@ export default function ChatInterface() {
         }
       }).catch(error => {
         console.error("Error fetching initial conversation:", error);
-        handleCreateNewChat(); // Fallback to creating new chat
-      }).finally(() => {
-        // setIsLoadingMessages(false); // Managed by message useEffect
+        handleCreateNewChat(); 
       });
     }
   }, [user, activeConversationId, handleCreateNewChat, isCreatingNewChat]);
@@ -80,7 +78,7 @@ export default function ChatInterface() {
 
   useEffect(() => {
     if (!user || !activeConversationId) {
-      if (user && activeConversationId === null && !isCreatingNewChat) { // Show greeting if no active chat is selected/exists yet
+      if (user && activeConversationId === null && !isCreatingNewChat) { 
          setMessages([{
           id: 'initial-greeting',
           text: LEXIA_GREETING_TEXT,
@@ -92,6 +90,7 @@ export default function ChatInterface() {
       } else {
         setMessages([]);
       }
+      setIsLoadingMessages(false); // Ensure loading is false if no user/activeId
       return;
     }
 
@@ -130,11 +129,10 @@ export default function ChatInterface() {
     });
 
     return () => unsubscribe();
-  }, [user, activeConversationId, toast]);
+  }, [user, activeConversationId, toast, isCreatingNewChat]);
 
 
   useEffect(() => {
-    // Scroll to bottom when messages change or AI is thinking
     if (viewportRef.current) {
       viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
     }
@@ -254,7 +252,7 @@ export default function ChatInterface() {
         isCreatingNewChat={isCreatingNewChat}
       />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Card className="flex-1 flex flex-col m-0 shadow-none rounded-none border-0 border-l">
+        <Card className="flex-1 flex flex-col m-0 shadow-none rounded-none border-0 border-l overflow-hidden">
           <CardHeader className="p-4 border-b">
             <h2 className="text-xl font-headline text-primary">
               Chat con LexIA
