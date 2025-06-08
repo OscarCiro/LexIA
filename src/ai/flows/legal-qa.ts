@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -29,7 +30,7 @@ const prompt = ai.definePrompt({
   name: 'legalQAPrompt',
   input: {schema: LegalQAInputSchema},
   output: {schema: LegalQAOutputSchema},
-  prompt: `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable.\n\nQuestion: {{{question}}}`,,
+  prompt: `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable. Puedes usar emojis relevantes y profesionales de forma sutil cuando sea apropiado (ej. ⚖️, 🏛️, 🇪🇸, 🇪🇺, 📄, ✅).\n\nQuestion: {{{question}}}`,
   config: {
     temperature: 0.4,
     maxTokens: 8000,

@@ -1,9 +1,10 @@
+
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import type { NextRequest } from 'next/server';
 
 export const runtime = 'edge'; // Prefer edge runtime for streaming
 
-const SYSTEM_PROMPT_TEMPLATE = `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable.
+const SYSTEM_PROMPT_TEMPLATE = `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable. Puedes usar emojis relevantes y profesionales de forma sutil cuando sea apropiado (ej. ⚖️, 🏛️, 🇪🇸, 🇪🇺, 📄, ✅).
 
 Pregunta del usuario: `;
 
