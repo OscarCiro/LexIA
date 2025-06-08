@@ -28,6 +28,7 @@ export default function ChatInterface() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null); // Ref for the viewport
   const { toast } = useToast();
 
   const handleCreateNewChat = useCallback(async (): Promise<string | null> => {
@@ -134,13 +135,11 @@ export default function ChatInterface() {
 
 
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTo({
-        top: scrollAreaRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
+    // Scroll to bottom when messages change or AI is thinking
+    if (viewportRef.current) {
+      viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isAiThinking]);
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
@@ -161,7 +160,6 @@ export default function ChatInterface() {
     try {
       await addDoc(collection(db, 'messages'), userMessageData);
       
-      // Update conversation title and lastUpdatedAt
       const convRef = doc(db, 'conversations', activeConversationId);
       const convDoc = await getDoc(convRef);
       const updateData: { lastUpdatedAt: any; title?: string } = { lastUpdatedAt: serverTimestamp() };
@@ -187,10 +185,9 @@ export default function ChatInterface() {
       let assistantResponseText = '';
       
       const tempAssistantMessageId = `temp_${Date.now()}`;
-      // Add placeholder for streaming AI response
-      setMessages(prev => [...prev.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting'), { // Remove greeting if it was there
+      setMessages(prev => [...prev.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting'), { 
         id: tempAssistantMessageId,
-        text: '', // Start with empty text for streaming
+        text: '', 
         role: 'assistant',
         userId: user.uid,
         conversationId: activeConversationId,
@@ -208,7 +205,7 @@ export default function ChatInterface() {
       }
       assistantResponseText += decoder.decode(undefined, { stream: false }); 
 
-      setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId)); // Remove temp
+      setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId)); 
 
       const assistantMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
         text: assistantResponseText,
@@ -244,13 +241,13 @@ export default function ChatInterface() {
   const handleSelectConversation = (id: string) => {
     if (id !== activeConversationId) {
       setActiveConversationId(id);
-      setMessages([]); // Clear messages for the new conversation
-      setIsLoadingMessages(true); // Indicate that messages for the new conv are loading
+      setMessages([]); 
+      setIsLoadingMessages(true); 
     }
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-background"> {/* Adjust height for navbar */}
+    <div className="flex h-[calc(100vh-4rem)] bg-background">
       <ChatHistorySidebar
         activeConversationId={activeConversationId}
         onSelectConversation={handleSelectConversation}
@@ -264,7 +261,8 @@ export default function ChatInterface() {
               Chat con LexIA
             </h2>
           </CardHeader>
-          <ScrollArea className="flex-1 p-4 space-y-4" ref={scrollAreaRef}>
+          <ScrollArea className="flex-1 bg-card" viewportRef={viewportRef} ref={scrollAreaRef}>
+            <div className="p-4 space-y-4">
               {isLoadingMessages && messages.length === 0 && (
                 <div className="flex justify-center items-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -282,7 +280,7 @@ export default function ChatInterface() {
                    <MessageBubble 
                       message={{
                           id: 'thinking-bubble',
-                          text: '', // Placeholder for actual content if needed
+                          text: '', 
                           role: 'assistant',
                           userId: user!.uid,
                           conversationId: activeConversationId!,
@@ -295,6 +293,7 @@ export default function ChatInterface() {
                     </div>
                   </MessageBubble>
               )}
+            </div>
           </ScrollArea>
           <CardFooter className="p-4 border-t bg-background">
             <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-3">
