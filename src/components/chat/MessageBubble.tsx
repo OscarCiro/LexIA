@@ -1,4 +1,5 @@
-import type { FC } from 'react';
+
+import type { FC, ReactNode } from 'react';
 import type { Message } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Bot } from 'lucide-react'; // Bot as a generic AI icon
@@ -9,9 +10,10 @@ interface MessageBubbleProps {
   message: Message;
   userDisplayName?: string | null;
   userPhotoURL?: string | null;
+  children?: ReactNode; // To allow passing custom content like the thinking indicator
 }
 
-const MessageBubble: FC<MessageBubbleProps> = ({ message, userDisplayName, userPhotoURL }) => {
+const MessageBubble: FC<MessageBubbleProps> = ({ message, userDisplayName, userPhotoURL, children }) => {
   const isUser = message.role === 'user';
   const avatarInitial = userDisplayName ? userDisplayName.charAt(0).toUpperCase() : (isUser ? 'U' : 'L');
 
@@ -24,9 +26,10 @@ const MessageBubble: FC<MessageBubbleProps> = ({ message, userDisplayName, userP
   ));
 
   return (
-    <div className={cn("flex items-end gap-3 mb-4", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex items-start gap-3 mb-4", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
-        <Avatar className="h-10 w-10 self-start shadow-sm">
+        <Avatar className="h-10 w-10 self-start shadow-sm shrink-0">
+          {/* For AI, always use Bot icon, no image */}
           <AvatarFallback className="bg-primary text-primary-foreground">
             <Bot className="h-5 w-5" />
           </AvatarFallback>
@@ -39,13 +42,13 @@ const MessageBubble: FC<MessageBubbleProps> = ({ message, userDisplayName, userP
         )}
       >
         <CardContent className="p-3 text-sm">
-          <p className="whitespace-pre-wrap">{formattedText}</p>
+          {children ? children : <p className="whitespace-pre-wrap">{formattedText}</p>}
         </CardContent>
       </Card>
       {isUser && (
-         <Avatar className="h-10 w-10 self-start shadow-sm">
+         <Avatar className="h-10 w-10 self-start shadow-sm shrink-0">
             <AvatarImage src={userPhotoURL || undefined} alt={userDisplayName || "Usuario"} />
-            <AvatarFallback>
+            <AvatarFallback className={cn(userPhotoURL ? "" : "bg-accent text-accent-foreground")}>
                 {avatarInitial}
             </AvatarFallback>
         </Avatar>

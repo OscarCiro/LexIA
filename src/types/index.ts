@@ -14,7 +14,15 @@ export interface Message {
   role: 'user' | 'assistant';
   userId: string;
   timestamp: Timestamp | Date; // Store as Timestamp, allow Date for creation
-  conversationId: string; 
+  conversationId: string;
 }
 
 export interface AppUser extends FirebaseUser {}
+
+export interface Conversation {
+  id: string; // document ID from Firestore
+  userId: string;
+  title: string;
+  createdAt: Timestamp | Date;
+  lastUpdatedAt: Timestamp | Date;
+}

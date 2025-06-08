@@ -1,55 +1,137 @@
+
 "use client";
 
 import type { FormEvent} from 'react';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Message } from '@/types';
+import type { Message, Conversation } from '@/types';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp, doc, updateDoc, getDoc, getDocs, limit } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { SendHorizonal, Loader2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
+import ChatHistorySidebar from './ChatHistorySidebar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
+
+const LEXIA_GREETING_TEXT = "¡Hola! Soy LexIA, tu asistente jurídico especializado en Derecho español y europeo. ¿En qué puedo ayudarte hoy?";
 
 export default function ChatInterface() {
   const { user, apiKey } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [isCreatingNewChat, setIsCreatingNewChat] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-  const currentConversationId = user ? `conv_${user.uid}` : null; // Simple conversation ID strategy
+
+  const handleCreateNewChat = useCallback(async (): Promise<string | null> => {
+    if (!user) return null;
+    setIsCreatingNewChat(true);
+    try {
+      const newConvRef = await addDoc(collection(db, 'conversations'), {
+        userId: user.uid,
+        title: "Nueva Consulta",
+        createdAt: serverTimestamp(),
+        lastUpdatedAt: serverTimestamp(),
+      });
+      setActiveConversationId(newConvRef.id);
+      setMessages([]); // Clear messages for new chat before greeting is added
+      return newConvRef.id;
+    } catch (error) {
+      console.error("Error creating new chat:", error);
+      toast({ title: "Error", description: "No se pudo crear la nueva consulta.", variant: "destructive" });
+      return null;
+    } finally {
+      setIsCreatingNewChat(false);
+    }
+  }, [user, toast]);
 
   useEffect(() => {
-    if (!user || !currentConversationId) {
-      setMessages([]);
+    if (user && !activeConversationId && !isCreatingNewChat) {
+      setIsLoadingMessages(true);
+      const convCol = collection(db, 'conversations');
+      const q = query(
+        convCol,
+        where('userId', '==', user.uid),
+        orderBy('lastUpdatedAt', 'desc'),
+        limit(1)
+      );
+      getDocs(q).then(snapshot => {
+        if (!snapshot.empty) {
+          setActiveConversationId(snapshot.docs[0].id);
+        } else {
+          handleCreateNewChat();
+        }
+      }).catch(error => {
+        console.error("Error fetching initial conversation:", error);
+        handleCreateNewChat(); // Fallback to creating new chat
+      }).finally(() => {
+        // setIsLoadingMessages(false); // Managed by message useEffect
+      });
+    }
+  }, [user, activeConversationId, handleCreateNewChat, isCreatingNewChat]);
+
+
+  useEffect(() => {
+    if (!user || !activeConversationId) {
+      if (user && activeConversationId === null && !isCreatingNewChat) { // Show greeting if no active chat is selected/exists yet
+         setMessages([{
+          id: 'initial-greeting',
+          text: LEXIA_GREETING_TEXT,
+          role: 'assistant',
+          userId: user.uid,
+          conversationId: 'greeting-session',
+          timestamp: new Date(),
+        }]);
+      } else {
+        setMessages([]);
+      }
       return;
     }
 
+    setIsLoadingMessages(true);
     const messagesCol = collection(db, 'messages');
     const q = query(
       messagesCol,
       where('userId', '==', user.uid),
-      where('conversationId', '==', currentConversationId),
+      where('conversationId', '==', activeConversationId),
       orderBy('timestamp', 'asc')
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const fetchedMessages: Message[] = [];
+      const fetchedMessagesDb: Message[] = [];
       querySnapshot.forEach((doc) => {
-        fetchedMessages.push({ id: doc.id, ...doc.data() } as Message);
+        fetchedMessagesDb.push({ id: doc.id, ...doc.data() } as Message);
       });
-      setMessages(fetchedMessages);
+
+      if (fetchedMessagesDb.length === 0 && !querySnapshot.metadata.hasPendingWrites) {
+        setMessages([{
+          id: `greeting-${activeConversationId}`,
+          text: LEXIA_GREETING_TEXT,
+          role: 'assistant',
+          userId: user.uid,
+          conversationId: activeConversationId,
+          timestamp: new Date(),
+        }]);
+      } else {
+        setMessages(fetchedMessagesDb);
+      }
+      setIsLoadingMessages(false);
     }, (error) => {
       console.error("Error fetching messages:", error);
       toast({ title: "Error", description: "No se pudieron cargar los mensajes.", variant: "destructive" });
+      setIsLoadingMessages(false);
     });
 
     return () => unsubscribe();
-  }, [user, currentConversationId, toast]);
+  }, [user, activeConversationId, toast]);
+
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -62,23 +144,32 @@ export default function ChatInterface() {
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !user || !apiKey || !currentConversationId) return;
+    if (!input.trim() || !user || !apiKey || !activeConversationId || isAiThinking) return;
 
-    setIsLoading(true);
+    setIsAiThinking(true);
     const userInput = input;
     setInput('');
 
-    const userMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+    const userMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
       text: userInput,
       role: 'user',
       userId: user.uid,
-      conversationId: currentConversationId,
+      conversationId: activeConversationId,
       timestamp: serverTimestamp(),
     };
 
     try {
-      await addDoc(collection(db, 'messages'), userMessage);
-      // Message will appear via Firestore listener
+      await addDoc(collection(db, 'messages'), userMessageData);
+      
+      // Update conversation title and lastUpdatedAt
+      const convRef = doc(db, 'conversations', activeConversationId);
+      const convDoc = await getDoc(convRef);
+      const updateData: { lastUpdatedAt: any; title?: string } = { lastUpdatedAt: serverTimestamp() };
+      if (convDoc.exists() && (convDoc.data().title === "Nueva Consulta" || messages.filter(m => m.role === 'user' && m.id !== 'initial-greeting' && m.id !== `greeting-${activeConversationId}`).length === 0)) {
+         updateData.title = userInput.substring(0, 40) + (userInput.length > 40 ? "..." : "");
+      }
+      await updateDoc(convRef, updateData);
+
 
       const response = await fetch('/api/lexia-chat', {
         method: 'POST',
@@ -95,16 +186,17 @@ export default function ChatInterface() {
       const decoder = new TextDecoder();
       let assistantResponseText = '';
       
-      // Create a temporary assistant message ID for streaming display
       const tempAssistantMessageId = `temp_${Date.now()}`;
-      setMessages(prev => [...prev, {
+      // Add placeholder for streaming AI response
+      setMessages(prev => [...prev.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting'), { // Remove greeting if it was there
         id: tempAssistantMessageId,
-        text: '',
+        text: '', // Start with empty text for streaming
         role: 'assistant',
         userId: user.uid,
-        conversationId: currentConversationId,
-        timestamp: new Timestamp(Math.floor(Date.now()/1000),0) // Approximate client timestamp
+        conversationId: activeConversationId,
+        timestamp: new Timestamp(Math.floor(Date.now()/1000),0) 
       }]);
+
 
       while (true) {
         const { done, value } = await reader.read();
@@ -114,19 +206,20 @@ export default function ChatInterface() {
           msg.id === tempAssistantMessageId ? { ...msg, text: assistantResponseText } : msg
         ));
       }
-       assistantResponseText += decoder.decode(undefined, { stream: false }); // Final flush
+      assistantResponseText += decoder.decode(undefined, { stream: false }); 
 
-      // Remove temporary message and add final one to Firestore
-      setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId));
+      setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId)); // Remove temp
 
-      const assistantMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+      const assistantMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
         text: assistantResponseText,
         role: 'assistant',
         userId: user.uid,
-        conversationId: currentConversationId,
+        conversationId: activeConversationId,
         timestamp: serverTimestamp(),
       };
-      await addDoc(collection(db, 'messages'), assistantMessage);
+      await addDoc(collection(db, 'messages'), assistantMessageData);
+      await updateDoc(convRef, { lastUpdatedAt: serverTimestamp() });
+
 
     } catch (error: any) {
       console.error('Error sending message:', error);
@@ -135,72 +228,93 @@ export default function ChatInterface() {
         description: error.message || "No se pudo obtener respuesta del asistente.",
         variant: "destructive",
       });
-       // Optionally add an error message to chat
-       const errorMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+       const errorMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
         text: "Lo siento, no pude procesar tu solicitud en este momento.",
         role: 'assistant',
         userId: user.uid,
-        conversationId: currentConversationId,
+        conversationId: activeConversationId,
         timestamp: serverTimestamp(),
       };
-      await addDoc(collection(db, 'messages'), errorMessage);
+      await addDoc(collection(db, 'messages'), errorMessageData);
     } finally {
-      setIsLoading(false);
+      setIsAiThinking(false);
+    }
+  };
+  
+  const handleSelectConversation = (id: string) => {
+    if (id !== activeConversationId) {
+      setActiveConversationId(id);
+      setMessages([]); // Clear messages for the new conversation
+      setIsLoadingMessages(true); // Indicate that messages for the new conv are loading
     }
   };
 
-
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-background"> {/* Adjust height for navbar */}
-      <Card className="flex-1 flex flex-col m-4 shadow-lg rounded-lg overflow-hidden">
-        <CardHeader className="p-4 border-b">
-          <h2 className="text-xl font-headline text-primary">Chat con LexIA</h2>
-        </CardHeader>
-        <ScrollArea className="flex-1 p-4 space-y-4" ref={scrollAreaRef}>
-            {messages.map((msg) => (
-                <MessageBubble 
-                    key={msg.id} 
-                    message={msg} 
-                    userDisplayName={user?.displayName}
-                    userPhotoURL={user?.photoURL}
-                />
-            ))}
-            {isLoading && messages[messages.length -1]?.role === 'user' && ( // Show loader only if last message was user and expecting AI response
-                 <MessageBubble 
-                    message={{
-                        id: 'loading',
-                        text: '',
-                        role: 'assistant',
-                        userId: user!.uid,
-                        conversationId: currentConversationId!,
-                        timestamp: new Date(),
-                    }}
-                >
-                  <div className="flex items-center p-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" />
-                    <span className="text-sm text-muted-foreground">LexIA está pensando...</span>
-                  </div>
-                </MessageBubble>
-            )}
-        </ScrollArea>
-        <CardFooter className="p-4 border-t">
-          <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-3">
-            <Input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Escribe tu consulta legal aquí..."
-              className="flex-1 text-base"
-              disabled={isLoading || !user || !apiKey}
-              aria-label="Entrada de mensaje"
-            />
-            <Button type="submit" disabled={isLoading || !input.trim() || !user || !apiKey} size="icon" className="bg-accent hover:bg-accent/90">
-              <SendHorizonal className="h-5 w-5" />
-              <span className="sr-only">Enviar</span>
-            </Button>
-          </form>
-        </CardFooter>
-      </Card>
+    <div className="flex h-[calc(100vh-4rem)] bg-background"> {/* Adjust height for navbar */}
+      <ChatHistorySidebar
+        activeConversationId={activeConversationId}
+        onSelectConversation={handleSelectConversation}
+        onCreateNewChat={handleCreateNewChat}
+        isCreatingNewChat={isCreatingNewChat}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Card className="flex-1 flex flex-col m-0 shadow-none rounded-none border-0 border-l">
+          <CardHeader className="p-4 border-b">
+            <h2 className="text-xl font-headline text-primary">
+              Chat con LexIA
+            </h2>
+          </CardHeader>
+          <ScrollArea className="flex-1 p-4 space-y-4" ref={scrollAreaRef}>
+              {isLoadingMessages && messages.length === 0 && (
+                <div className="flex justify-center items-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              )}
+              {!isLoadingMessages && messages.map((msg) => (
+                  <MessageBubble 
+                      key={msg.id} 
+                      message={msg} 
+                      userDisplayName={user?.displayName}
+                      userPhotoURL={user?.photoURL}
+                  />
+              ))}
+              {isAiThinking && messages[messages.length -1]?.role === 'user' && (
+                   <MessageBubble 
+                      message={{
+                          id: 'thinking-bubble',
+                          text: '', // Placeholder for actual content if needed
+                          role: 'assistant',
+                          userId: user!.uid,
+                          conversationId: activeConversationId!,
+                          timestamp: new Date(),
+                      }}
+                  >
+                    <div className="flex items-center p-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" />
+                      <span className="text-sm text-muted-foreground">LexIA está pensando...</span>
+                    </div>
+                  </MessageBubble>
+              )}
+          </ScrollArea>
+          <CardFooter className="p-4 border-t bg-background">
+            <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-3">
+              <Input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Escribe tu consulta legal aquí..."
+                className="flex-1 text-base"
+                disabled={isAiThinking || !user || !apiKey || !activeConversationId || isLoadingMessages}
+                aria-label="Entrada de mensaje"
+              />
+              <Button type="submit" disabled={isAiThinking || !input.trim() || !user || !apiKey || !activeConversationId || isLoadingMessages} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground">
+                <SendHorizonal className="h-5 w-5" />
+                <span className="sr-only">Enviar</span>
+              </Button>
+            </form>
+          </CardFooter>
+        </Card>
+      </div>
     </div>
   );
 }
