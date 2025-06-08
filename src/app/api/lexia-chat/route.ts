@@ -1,0 +1,89 @@
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import type { NextRequest } from 'next/server';
+
+export const runtime = 'edge'; // Prefer edge runtime for streaming
+
+const SYSTEM_PROMPT_TEMPLATE = `Eres LexIA, asistente jurídico especializado en Derecho español y europeo. Responde con lenguaje claro y, cuando proceda, menciona la norma o jurisprudencia aplicable.
+
+Pregunta del usuario: `;
+
+
+export async function POST(req: NextRequest) {
+  try {
+    const { question, apiKey } = await req.json();
+
+    if (!question || typeof question !== 'string') {
+      return new Response(JSON.stringify({ message: "La pregunta es requerida y debe ser texto." }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (!apiKey || typeof apiKey !== 'string') {
+      return new Response(JSON.stringify({ message: "La clave API de Gemini es requerida." }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash-latest", // Using a generally available and capable model
+      // systemInstruction: // System instruction can be part of the user prompt for older models or some configurations
+    });
+
+    const generationConfig = {
+      temperature: 0.4,
+      maxOutputTokens: 8000, // Ensure this is within model limits
+      // topK: Defines the K top-most probable tokens to be considered for sampling. Default is 40.
+      // topP: Defines the P top-most probable tokens to be considered for sampling. Default is 0.95.
+    };
+    
+    const safetySettings = [
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+    ];
+
+    const fullPrompt = `${SYSTEM_PROMPT_TEMPLATE}${question}`;
+    
+    const stream = await model.generateContentStream({
+        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+        generationConfig,
+        safetySettings,
+    });
+
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream.stream) {
+            const chunkText = chunk.text();
+            controller.enqueue(new TextEncoder().encode(chunkText));
+          }
+        } catch (error: any) {
+          console.error("Error during stream processing:", error);
+          let errorMessage = "Error procesando la respuesta del modelo.";
+          if (error.message) {
+            errorMessage += ` Detalles: ${error.message}`;
+          }
+           // Try to enqueue a meaningful error message if possible, or handle on client
+          controller.enqueue(new TextEncoder().encode(`\nSTREAM_ERROR: ${errorMessage}`));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(readableStream, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+
+  } catch (error: any) {
+    console.error("Error in /api/lexia-chat:", error);
+    let message = "Error interno del servidor al procesar la solicitud.";
+    let status = 500;
+
+    if (error.message && error.message.includes("API key not valid")) {
+        message = "Clave API de Gemini inválida o sin permisos.";
+        status = 401;
+    } else if (error.message) {
+        message = error.message;
+    }
+    
+    return new Response(JSON.stringify({ message }), { status, headers: { 'Content-Type': 'application/json' } });
+  }
+}
