@@ -9,7 +9,7 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp, doc, updateDoc, getDoc, getDocs, limit } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { SendHorizonal, Loader2 } from 'lucide-react';
+import { SendHorizonal, Loader2, Brain, Sparkles } from 'lucide-react'; // Added Brain and Sparkles
 import MessageBubble from './MessageBubble';
 import ChatHistorySidebar from './ChatHistorySidebar';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,7 +19,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 const LEXIA_GREETING_TEXT = "¡Hola! Soy LexIA, tu asistente jurídico especializado en Derecho español y europeo. ¿En qué puedo ayudarte hoy?";
 
 export default function ChatInterface() {
-  const { user, apiKey } = useAuth();
+  const { user, selectedProvider, getActiveApiKey, loading: authLoading } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
@@ -71,6 +71,8 @@ export default function ChatInterface() {
       }).catch(error => {
         console.error("Error fetching initial conversation:", error);
         handleCreateNewChat(); 
+      }).finally(() => {
+        // setIsLoadingMessages(false); // Moved to message loading effect
       });
     }
   }, [user, activeConversationId, handleCreateNewChat, isCreatingNewChat]);
@@ -84,13 +86,13 @@ export default function ChatInterface() {
           text: LEXIA_GREETING_TEXT,
           role: 'assistant',
           userId: user.uid,
-          conversationId: 'greeting-session',
+          conversationId: 'greeting-session', // This might need to be dynamic or null
           timestamp: new Date(),
         }]);
       } else {
         setMessages([]);
       }
-      setIsLoadingMessages(false); // Ensure loading is false if no user/activeId
+      setIsLoadingMessages(false);
       return;
     }
 
@@ -109,7 +111,7 @@ export default function ChatInterface() {
         fetchedMessagesDb.push({ id: doc.id, ...doc.data() } as Message);
       });
 
-      if (fetchedMessagesDb.length === 0 && !querySnapshot.metadata.hasPendingWrites) {
+      if (fetchedMessagesDb.length === 0 && !querySnapshot.metadata.hasPendingWrites && activeConversationId) {
         setMessages([{
           id: `greeting-${activeConversationId}`,
           text: LEXIA_GREETING_TEXT,
@@ -140,7 +142,8 @@ export default function ChatInterface() {
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !user || !apiKey || !activeConversationId || isAiThinking) return;
+    const apiKey = getActiveApiKey();
+    if (!input.trim() || !user || !apiKey || !activeConversationId || isAiThinking || authLoading) return;
 
     setIsAiThinking(true);
     const userInput = input;
@@ -160,16 +163,27 @@ export default function ChatInterface() {
       const convRef = doc(db, 'conversations', activeConversationId);
       const convDoc = await getDoc(convRef);
       const updateData: { lastUpdatedAt: any; title?: string } = { lastUpdatedAt: serverTimestamp() };
-      if (convDoc.exists() && (convDoc.data().title === "Nueva Consulta" || messages.filter(m => m.role === 'user' && m.id !== 'initial-greeting' && m.id !== `greeting-${activeConversationId}`).length === 0)) {
+      
+      // Check if this is the first user message (after potential greeting) to set title
+      const nonGreetingMessages = messages.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting');
+      if (convDoc.exists() && (convDoc.data().title === "Nueva Consulta" || nonGreetingMessages.filter(m=> m.role === 'user').length === 0)) {
          updateData.title = userInput.substring(0, 40) + (userInput.length > 40 ? "..." : "");
       }
       await updateDoc(convRef, updateData);
 
+      const apiEndpoint = selectedProvider === 'gemini' ? '/api/lexia-chat' : '/api/lexia-chat-openai';
+      
+      // Prepare history for OpenAI
+      const historyForApi = selectedProvider === 'chatgpt' 
+        ? messages.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting')
+                    .map(m => ({role: m.role, text: m.text}))
+        : undefined;
 
-      const response = await fetch('/api/lexia-chat', {
+
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: userInput, apiKey }),
+        body: JSON.stringify({ question: userInput, apiKey, history: historyForApi }),
       });
 
       if (!response.ok || !response.body) {
@@ -182,14 +196,17 @@ export default function ChatInterface() {
       let assistantResponseText = '';
       
       const tempAssistantMessageId = `temp_${Date.now()}`;
-      setMessages(prev => [...prev.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting'), { 
-        id: tempAssistantMessageId,
-        text: '', 
-        role: 'assistant',
-        userId: user.uid,
-        conversationId: activeConversationId,
-        timestamp: new Timestamp(Math.floor(Date.now()/1000),0) 
-      }]);
+       setMessages(prev => {
+        const filteredPrev = prev.filter(m => m.id !== `greeting-${activeConversationId}` && m.id !== 'initial-greeting');
+        return [...filteredPrev, { 
+          id: tempAssistantMessageId,
+          text: '', 
+          role: 'assistant',
+          userId: user.uid,
+          conversationId: activeConversationId,
+          timestamp: new Timestamp(Math.floor(Date.now()/1000),0) 
+        }];
+      });
 
 
       while (true) {
@@ -200,19 +217,29 @@ export default function ChatInterface() {
           msg.id === tempAssistantMessageId ? { ...msg, text: assistantResponseText } : msg
         ));
       }
-      assistantResponseText += decoder.decode(undefined, { stream: false }); 
+      // Ensure any final buffered text is decoded
+      const remainingText = decoder.decode(undefined, { stream: false });
+      if (remainingText) {
+        assistantResponseText += remainingText;
+         setMessages(prev => prev.map(msg => 
+          msg.id === tempAssistantMessageId ? { ...msg, text: assistantResponseText } : msg
+        ));
+      }
+
 
       setMessages(prev => prev.filter(msg => msg.id !== tempAssistantMessageId)); 
 
-      const assistantMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
-        text: assistantResponseText,
-        role: 'assistant',
-        userId: user.uid,
-        conversationId: activeConversationId,
-        timestamp: serverTimestamp(),
-      };
-      await addDoc(collection(db, 'messages'), assistantMessageData);
-      await updateDoc(convRef, { lastUpdatedAt: serverTimestamp() });
+      if (assistantResponseText.trim()) { // Only add if there's actual content
+        const assistantMessageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+          text: assistantResponseText,
+          role: 'assistant',
+          userId: user.uid,
+          conversationId: activeConversationId,
+          timestamp: serverTimestamp(),
+        };
+        await addDoc(collection(db, 'messages'), assistantMessageData);
+        await updateDoc(convRef, { lastUpdatedAt: serverTimestamp() });
+      }
 
 
     } catch (error: any) {
@@ -229,7 +256,9 @@ export default function ChatInterface() {
         conversationId: activeConversationId,
         timestamp: serverTimestamp(),
       };
-      await addDoc(collection(db, 'messages'), errorMessageData);
+      if (activeConversationId) { // Ensure activeConversationId is not null
+        await addDoc(collection(db, 'messages'), errorMessageData);
+      }
     } finally {
       setIsAiThinking(false);
     }
@@ -242,6 +271,8 @@ export default function ChatInterface() {
       setIsLoadingMessages(true); 
     }
   };
+  
+  const currentApiKey = getActiveApiKey();
 
   return (
     <div className="flex h-[calc(100vh-4rem)] bg-background">
@@ -253,10 +284,14 @@ export default function ChatInterface() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Card className="flex-1 flex flex-col m-0 shadow-none rounded-none border-0 border-l overflow-hidden">
-          <CardHeader className="p-4 border-b">
+          <CardHeader className="p-4 border-b flex flex-row justify-between items-center">
             <h2 className="text-xl font-headline text-primary">
               Chat con LexIA
             </h2>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {selectedProvider === 'gemini' ? <Brain className="h-5 w-5 text-blue-600" /> : <Sparkles className="h-5 w-5 text-green-500" />}
+              <span>Usando: {selectedProvider === 'gemini' ? 'Gemini' : 'ChatGPT'}</span>
+            </div>
           </CardHeader>
           <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
             <div className="p-4 space-y-4">
@@ -279,8 +314,8 @@ export default function ChatInterface() {
                           id: 'thinking-bubble',
                           text: '', 
                           role: 'assistant',
-                          userId: user!.uid,
-                          conversationId: activeConversationId!,
+                          userId: user!.uid, // user should exist if we are sending a message
+                          conversationId: activeConversationId!, // activeConversationId should exist
                           timestamp: new Date(),
                       }}
                   >
@@ -300,10 +335,10 @@ export default function ChatInterface() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Escribe tu consulta legal aquí..."
                 className="flex-1 text-base"
-                disabled={isAiThinking || !user || !apiKey || !activeConversationId || isLoadingMessages}
+                disabled={authLoading || isAiThinking || !user || !currentApiKey || !activeConversationId || isLoadingMessages}
                 aria-label="Entrada de mensaje"
               />
-              <Button type="submit" disabled={isAiThinking || !input.trim() || !user || !apiKey || !activeConversationId || isLoadingMessages} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground">
+              <Button type="submit" disabled={authLoading || isAiThinking || !input.trim() || !user || !currentApiKey || !activeConversationId || isLoadingMessages} size="icon" className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <SendHorizonal className="h-5 w-5" />
                 <span className="sr-only">Enviar</span>
               </Button>
@@ -314,4 +349,3 @@ export default function ChatInterface() {
     </div>
   );
 }
-

@@ -26,3 +26,5 @@ export interface Conversation {
   createdAt: Timestamp | Date;
   lastUpdatedAt: Timestamp | Date;
 }
+
+export type AiProvider = 'gemini' | 'chatgpt';
