@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
 
     const stream = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview", // Changed model identifier
+      model: "gpt-4-turbo-preview", // Ensure this model identifier is used
       messages: messages,
       temperature: 0.5, 
       max_tokens: 2000, 
@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
         if (error.code === 'invalid_api_key') {
             message = "Clave API de OpenAI inválida o sin permisos.";
             status = 401;
+        } else if (error.message.includes("does not exist or you do not have access to it")) {
+            // Keep the more specific error message from OpenAI
+            message = error.message;
         }
     } else if (error.message) {
         message = error.message;
@@ -87,3 +90,4 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ message }), { status, headers: { 'Content-Type': 'application/json' } });
   }
 }
+
